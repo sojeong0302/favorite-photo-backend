@@ -1,4 +1,5 @@
 import prisma from '../configs/prisma.js';
+import { SIGNUP_POINTS } from '../constants/points.js';
 
 export const findUserByEmail = (email) =>
   prisma.user.findUnique({ where: { email } });
@@ -18,13 +19,13 @@ export const createUserWithPoint = ({ email, nickname, password }) =>
     });
 
     await tx.point.create({
-      data: { userId: user.id, balance: 2000 },
+      data: { userId: user.id, balance: SIGNUP_POINTS },
     });
 
     await tx.pointHistory.create({
       data: {
         userId: user.id,
-        amount: 2000,
+        amount: SIGNUP_POINTS,
         reason: 'SIGN_UP',
         description: '회원가입 축하 포인트',
       },
@@ -67,13 +68,13 @@ export const createOAuthUser = ({
     });
 
     await tx.point.create({
-      data: { userId: user.id, balance: 2000 },
+      data: { userId: user.id, balance: SIGNUP_POINTS },
     });
 
     await tx.pointHistory.create({
       data: {
         userId: user.id,
-        amount: 2000,
+        amount: SIGNUP_POINTS,
         reason: 'SIGN_UP',
         description: '회원가입 축하 포인트',
       },

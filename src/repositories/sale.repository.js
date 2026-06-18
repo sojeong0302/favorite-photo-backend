@@ -40,10 +40,11 @@ const saleRepository = {
     });
   },
 
-  getSale: async ({ saleId, tx }) => {
+  getSale: async ({ saleId, include, tx }) => {
     const dbClient = tx || prisma;
     return await dbClient.sale.findUnique({
       where: { id: saleId },
+      include,
     });
   },
 

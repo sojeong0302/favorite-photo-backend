@@ -7,9 +7,9 @@ import {
 } from '../utils/jwt.js';
 import AppError from '../utils/AppError.js';
 import { ERROR_CODES } from '../constants/errorCodes.js';
+import { SIGNUP_POINTS } from '../constants/points.js';
 
 const REFRESH_EXPIRES_DAYS = 7;
-const SIGNUP_POINTS = 2000;
 
 const generateTokens = async (userId) => {
   const accessToken = signAccessToken({ userId });
