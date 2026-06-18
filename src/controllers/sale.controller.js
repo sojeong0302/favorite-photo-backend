@@ -9,7 +9,7 @@ export const createSale = async (req, res, next) => {
     if (!userId) {
       throw new AppError(ERROR_CODES.UNAUTHORIZED());
     }
-
+    console.log('req.body:', req.body);
     const {
       photoCardId,
       price,
@@ -40,9 +40,9 @@ export const createSale = async (req, res, next) => {
     }
 
     const response = await saleService.createSale({
-      photoCardId,
-      price,
-      quantity,
+      photoCardId: Number(photoCardId),
+      price: Number(price),
+      quantity: Number(quantity),
       exchangeGrade,
       exchangeGenre,
       exchangeDescription,

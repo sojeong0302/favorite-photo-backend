@@ -543,13 +543,16 @@ const getFormattedSales = ({ sales }) => {
       imageUrl: sale.photoCard.imageUrl,
       grade: sale.photoCard.grade,
       genre: sale.photoCard.genre,
-      creatorNickname: sale.photoCard.creator.nickname,
       quantity: activeSaleItems.length,
       count: activeSaleItems.length,
       status: sale.status,
       statusLabel: sale.status === 'SOLD_OUT' ? '판매 완료' : '판매 중',
       price: sale.price,
       createdAt: sale.createdAt,
+      creator: {
+        nickname: sale.photoCard.creator.nickname,
+      },
+      /*creatorNickname: sale.photoCard.creator.nickname,*/
     };
   });
 };
@@ -568,7 +571,6 @@ const getFormattedExchanges = ({ exchangeProposals }) => {
       imageUrl: photoCard.imageUrl,
       grade: photoCard.grade,
       genre: photoCard.genre,
-      creatorNickname: photoCard.creator.nickname,
       quantity: 1,
       count: 1,
       status: proposal.status,
@@ -576,6 +578,10 @@ const getFormattedExchanges = ({ exchangeProposals }) => {
       price: proposal.sale.price,
       targetCardName: proposal.sale.photoCard.name,
       createdAt: proposal.createdAt,
+      creator: {
+        nickname: photoCard.creator.nickname,
+      },
+      /*creatorNickname: sale.photoCard.creator.nickname,*/
     };
   });
 };

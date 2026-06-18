@@ -1,10 +1,11 @@
 import { ExchangeStatus, CardStatus, SaleStatus } from '@prisma/client';
 
 import { prisma } from '../lib/prisma.js';
+import exchangeProposalRepository from '../repositories/exchangeProposal.repository.js';
+import cardCopyRepository from '../repositories/cardCopy.repository.js';
 import { createNotification } from './notification.service.js';
 import AppError from '../utils/AppError.js';
 import { ERROR_CODES } from '../constants/errorCodes.js';
-import exchangeProposalRepository from '../repositories/exchangeProposal.repository.js';
 
 const EXCHANGE_STATUS = new Set([
   ExchangeStatus.PENDING,
@@ -68,8 +69,8 @@ export async function createProposal({
     );
   }
 
-  const saleCardCopy = await prisma.cardCopy.findUnique({
-    where: { id: sale.saleItems[0].cardCopyId },
+  const saleCardCopy = await cardCopyRepository.getCardCopyById({
+    id: sale.saleItems[0].cardCopyId,
   });
 
   if (!saleCardCopy) {
@@ -86,8 +87,8 @@ export async function createProposal({
     );
   }
 
-  const offeredCopy = await prisma.cardCopy.findUnique({
-    where: { id: offeredCardCopyId },
+  const offeredCopy = await cardCopyRepository.getCardCopyById({
+    id: offeredCardCopyId,
     include: {
       owner: {
         select: {
@@ -113,13 +114,11 @@ export async function createProposal({
     );
   }
 
-  const duplicated = await prisma.exchangeProposal.findFirst({
-    where: {
-      saleId,
-      proposerId: userId,
-      offeredCardCopyId,
-      status: ExchangeStatus.PENDING,
-    },
+  const duplicated = await exchangeProposalRepository.findDuplicatedProposal({
+    saleId,
+    proposerId: userId,
+    offeredCardCopyId,
+    status: ExchangeStatus.PENDING,
   });
 
   if (duplicated) {
@@ -130,7 +129,7 @@ export async function createProposal({
     );
   }
 
-  const proposal = await prisma.exchangeProposal.create({
+  const proposal = await exchangeProposalRepository.createProposal({
     data: {
       saleId,
       proposerId: userId,
@@ -193,54 +192,9 @@ export async function listProposals({
   };
 
   const [totalCount, items] = await Promise.all([
-    prisma.exchangeProposal.count({ where }),
-    prisma.exchangeProposal.findMany({
+    exchangeProposalRepository.countProposals({ where }),
+    exchangeProposalRepository.getProposalList({
       where,
-      include: {
-        proposer: {
-          select: {
-            id: true,
-            nickname: true,
-          },
-        },
-        sale: {
-          select: {
-            id: true,
-            sellerId: true,
-            photoCardId: true,
-            price: true,
-            status: true,
-            photoCard: {
-              select: {
-                id: true,
-                name: true,
-                imageUrl: true,
-                grade: true,
-                genre: true,
-              },
-            },
-          },
-        },
-        offeredCardCopy: {
-          select: {
-            id: true,
-            ownerId: true,
-            photoCardId: true,
-            status: true,
-            serialNumber: true,
-            photoCard: {
-              select: {
-                id: true,
-                name: true,
-                imageUrl: true,
-                grade: true,
-                genre: true,
-              },
-            },
-          },
-        },
-      },
-      orderBy: { createdAt: 'desc' },
       skip,
       take: safeLimit,
     }),
@@ -350,8 +304,8 @@ export async function acceptProposal({ userId, proposalId }) {
   validatePositiveInteger(proposalId, 'proposalId');
 
   return prisma.$transaction(async (tx) => {
-    const proposal = await tx.exchangeProposal.findUnique({
-      where: { id: proposalId },
+    const proposal = await exchangeProposalRepository.getProposalById({
+      id: proposalId,
       include: {
         sale: {
           include: {
@@ -360,6 +314,7 @@ export async function acceptProposal({ userId, proposalId }) {
         },
         offeredCardCopy: true,
       },
+      tx,
     });
 
     if (!proposal) {
@@ -386,8 +341,9 @@ export async function acceptProposal({ userId, proposalId }) {
       );
     }
 
-    const saleCardCopy = await tx.cardCopy.findUnique({
-      where: { id: proposal.sale.saleItems[0].cardCopyId },
+    const saleCardCopy = await cardCopyRepository.getCardCopyById({
+      id: proposal.sale.saleItems[0].cardCopyId,
+      tx,
     });
 
     if (!saleCardCopy) {
@@ -414,8 +370,9 @@ export async function acceptProposal({ userId, proposalId }) {
       );
     }
 
-    const offeredCardCopy = await tx.cardCopy.findUnique({
-      where: { id: proposal.offeredCardCopyId },
+    const offeredCardCopy = await cardCopyRepository.getCardCopyById({
+      id: proposal.offeredCardCopyId,
+      tx,
     });
 
     if (!offeredCardCopy) {
@@ -438,40 +395,35 @@ export async function acceptProposal({ userId, proposalId }) {
       );
     }
 
-    await tx.cardCopy.update({
-      where: { id: saleCardCopy.id },
+    await cardCopyRepository.updateCardCopy({
+      id: saleCardCopy.id,
       data: {
         ownerId: proposal.proposerId,
         status: CardStatus.OWNED,
       },
+      tx,
     });
 
-    await tx.cardCopy.update({
-      where: { id: offeredCardCopy.id },
+    await cardCopyRepository.updateCardCopy({
+      id: offeredCardCopy.id,
       data: {
         ownerId: userId,
         status: CardStatus.OWNED,
       },
+      tx,
     });
 
-    const acceptedProposal = await tx.exchangeProposal.update({
-      where: { id: proposalId },
-      data: {
-        status: ExchangeStatus.ACCEPTED,
-      },
+    await exchangeProposalRepository.setStatus({
+      id: proposalId,
+      prevStatus: ExchangeStatus.PENDING,
+      newStatus: ExchangeStatus.ACCEPTED,
+      tx,
     });
 
-    await tx.exchangeProposal.updateMany({
-      where: {
-        saleId: proposal.saleId,
-        status: ExchangeStatus.PENDING,
-        id: {
-          not: proposalId,
-        },
-      },
-      data: {
-        status: ExchangeStatus.CANCELED,
-      },
+    await exchangeProposalRepository.cancelOtherPendingProposals({
+      saleId: proposal.saleId,
+      excludeId: proposalId,
+      tx,
     });
 
     await tx.sale.update({
@@ -490,6 +442,9 @@ export async function acceptProposal({ userId, proposalId }) {
       targetType: 'EXCHANGE',
     });
 
-    return acceptedProposal;
+    return {
+      ...proposal,
+      status: ExchangeStatus.ACCEPTED,
+    };
   });
 }

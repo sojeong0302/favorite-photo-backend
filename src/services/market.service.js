@@ -20,17 +20,12 @@ const parsePriceCursor = (cursor) => {
   return { price, id };
 };
 
-export const getMarketCardsService = async ({
-  cursor,
-  limit = 15,
-  keyword,
-  grade,
-  genre,
-  sort = 'latest',
-  saleStatus,
-}) => {
-  const take = Number(limit);
+const isPriceSort = (sort) => sort === 'priceAsc' || sort === 'priceDesc';
 
+const isSoldOutSale = (sale) =>
+  sale.status === SaleStatus.SOLD_OUT || sale._count.saleItems === 0;
+
+const buildMarketWhere = ({ keyword, grade, genre, saleStatus }) => {
   const photoCardWhere = {
     ...(keyword && {
       name: {
@@ -74,64 +69,69 @@ export const getMarketCardsService = async ({
     };
   }
 
-  const where = {
+  return {
     ...saleStatusWhere,
     photoCard: photoCardWhere,
   };
+};
 
-  let orderBy = [{ id: 'desc' }];
-  let cursorWhere = {};
-
+const buildMarketOrderBy = (sort) => {
   if (sort === 'priceAsc') {
-    orderBy = [{ price: 'asc' }, { id: 'desc' }];
+    return [{ price: 'asc' }, { id: 'desc' }];
   }
 
   if (sort === 'priceDesc') {
-    orderBy = [{ price: 'desc' }, { id: 'desc' }];
+    return [{ price: 'desc' }, { id: 'desc' }];
   }
 
-  if (cursor) {
-    if (sort === 'priceAsc' || sort === 'priceDesc') {
-      const parsedCursor = parsePriceCursor(cursor);
+  return [{ id: 'desc' }];
+};
 
-      if (!parsedCursor) {
-        throw new AppError(
-          ERROR_CODES.INVALID_FORMAT('올바르지 않은 cursor 값입니다.')
-        );
-      }
+const buildMarketCursorWhere = ({ cursor, sort }) => {
+  if (!cursor) return {};
 
-      cursorWhere = {
-        OR: [
-          {
-            price: {
-              [sort === 'priceAsc' ? 'gt' : 'lt']: parsedCursor.price,
-            },
-          },
-          {
-            price: parsedCursor.price,
-            id: {
-              lt: parsedCursor.id,
-            },
-          },
-        ],
-      };
-    } else {
-      const parsedCursor = Number(cursor);
+  if (isPriceSort(sort)) {
+    const parsedCursor = parsePriceCursor(cursor);
 
-      if (!Number.isInteger(parsedCursor)) {
-        throw new AppError(
-          ERROR_CODES.INVALID_FORMAT('올바르지 않은 cursor 값입니다.')
-        );
-      }
-
-      cursorWhere = {
-        id: {
-          lt: parsedCursor,
-        },
-      };
+    if (!parsedCursor) {
+      throw new AppError(
+        ERROR_CODES.INVALID_FORMAT('올바르지 않은 cursor 값입니다.')
+      );
     }
+
+    return {
+      OR: [
+        {
+          price: {
+            [sort === 'priceAsc' ? 'gt' : 'lt']: parsedCursor.price,
+          },
+        },
+        {
+          price: parsedCursor.price,
+          id: {
+            lt: parsedCursor.id,
+          },
+        },
+      ],
+    };
   }
 
+  const parsedCursor = Number(cursor);
+
+  if (!Number.isInteger(parsedCursor)) {
+    throw new AppError(
+      ERROR_CODES.INVALID_FORMAT('올바르지 않은 cursor 값입니다.')
+    );
+  }
+
+  return {
+    id: {
+      lt: parsedCursor,
+    },
+  };
+};
+
+const getMarketCounts = async (where) => {
   const countSales = await prisma.sale.findMany({
     where,
     select: {
@@ -154,18 +154,15 @@ export const getMarketCardsService = async ({
     },
   });
 
-  const counts = countSales.reduce(
+  return countSales.reduce(
     (acc, sale) => {
       const grade = sale.photoCard.grade;
       const genre = sale.photoCard.genre;
-      const remainingQuantity = sale._count.saleItems;
-      const isSoldOut =
-        sale.status === SaleStatus.SOLD_OUT || remainingQuantity === 0;
 
       acc.grades[grade] = (acc.grades[grade] ?? 0) + 1;
       acc.genres[genre] = (acc.genres[genre] ?? 0) + 1;
 
-      if (isSoldOut) {
+      if (isSoldOutSale(sale)) {
         acc.saleStatuses.soldOut += 1;
       } else {
         acc.saleStatuses.onSale += 1;
@@ -182,6 +179,43 @@ export const getMarketCardsService = async ({
       },
     }
   );
+};
+
+const mapMarketCard = (sale) => {
+  const remainingQuantity = sale._count.saleItems;
+
+  return {
+    saleId: sale.id,
+    cardId: sale.photoCard.id,
+    name: sale.photoCard.name,
+    imageUrl: sale.photoCard.imageUrl,
+    grade: sale.photoCard.grade,
+    genre: sale.photoCard.genre,
+    price: sale.price,
+    status: sale.status,
+    isSoldOut: sale.status === SaleStatus.SOLD_OUT || remainingQuantity === 0,
+    remainingQuantity,
+    totalQuantity: sale.photoCard.totalQuantity,
+    sellerNickname: sale.seller.nickname,
+    creatorNickname: sale.photoCard.creator.nickname,
+    createdAt: sale.createdAt,
+  };
+};
+
+export const getMarketCardsService = async ({
+  cursor,
+  limit = 15,
+  keyword,
+  grade,
+  genre,
+  sort = 'latest',
+  saleStatus,
+}) => {
+  const take = Number(limit);
+  const where = buildMarketWhere({ keyword, grade, genre, saleStatus });
+  const orderBy = buildMarketOrderBy(sort);
+  const cursorWhere = buildMarketCursorWhere({ cursor, sort });
+  const counts = await getMarketCounts(where);
 
   const sales = await prisma.sale.findMany({
     where: {
@@ -232,31 +266,12 @@ export const getMarketCardsService = async ({
   const lastSale = currentSales[currentSales.length - 1];
 
   const nextCursor = hasNextPage
-    ? sort === 'priceAsc' || sort === 'priceDesc'
+    ? isPriceSort(sort)
       ? `${lastSale.price}_${lastSale.id}`
       : String(lastSale.id)
     : null;
 
-  const cards = currentSales.map((sale) => {
-    const remainingQuantity = sale._count.saleItems;
-
-    return {
-      saleId: sale.id,
-      cardId: sale.photoCard.id,
-      name: sale.photoCard.name,
-      imageUrl: sale.photoCard.imageUrl,
-      grade: sale.photoCard.grade,
-      genre: sale.photoCard.genre,
-      price: sale.price,
-      status: sale.status,
-      isSoldOut: sale.status === SaleStatus.SOLD_OUT || remainingQuantity === 0,
-      remainingQuantity,
-      totalQuantity: sale.photoCard.totalQuantity,
-      sellerNickname: sale.seller.nickname,
-      creatorNickname: sale.photoCard.creator.nickname,
-      createdAt: sale.createdAt,
-    };
-  });
+  const cards = currentSales.map(mapMarketCard);
 
   return {
     cards,

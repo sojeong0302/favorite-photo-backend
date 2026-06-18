@@ -1,7 +1,7 @@
-import prisma from '../configs/prisma.js';
 import AppError from '../utils/AppError.js';
 import { ERROR_CODES } from '../constants/errorCodes.js';
 import { sendSseToUser } from '../utils/sseClients.js';
+import notificationRepository from '../repositories/notification.repository.js';
 
 export const createNotification = async ({
   userId,
@@ -10,8 +10,9 @@ export const createNotification = async ({
   linkUrl,
   targetId,
   targetType,
+  tx,
 }) => {
-  const notification = await prisma.notification.create({
+  const notification = await notificationRepository.createNotification({
     data: {
       userId,
       type,
@@ -20,6 +21,7 @@ export const createNotification = async ({
       targetId,
       targetType,
     },
+    tx,
   });
 
   sendSseToUser(userId, 'notification', notification);
@@ -28,13 +30,8 @@ export const createNotification = async ({
 };
 
 export const getNotificationsService = async (userId) => {
-  const notifications = await prisma.notification.findMany({
-    where: {
-      userId,
-    },
-    orderBy: {
-      createdAt: 'desc',
-    },
+  const notifications = await notificationRepository.getNotifications({
+    userId,
   });
 
   const unreadCount = notifications.filter(
@@ -59,10 +56,8 @@ export const readNotificationsService = async (userId, notificationId) => {
     );
   }
 
-  const notification = await prisma.notification.findUnique({
-    where: {
-      id: parsedNotificationId,
-    },
+  const notification = await notificationRepository.getNotificationById({
+    id: parsedNotificationId,
   });
 
   if (!notification) {
@@ -75,24 +70,13 @@ export const readNotificationsService = async (userId, notificationId) => {
     );
   }
 
-  return await prisma.notification.update({
-    where: {
-      id: parsedNotificationId,
-    },
-    data: {
-      isRead: true,
-    },
+  return await notificationRepository.readNotification({
+    id: parsedNotificationId,
   });
 };
 
 export const readAllNotificationsService = async (userId) => {
-  return await prisma.notification.updateMany({
-    where: {
-      userId,
-      isRead: false,
-    },
-    data: {
-      isRead: true,
-    },
+  return await notificationRepository.readAllNotifications({
+    userId,
   });
 };

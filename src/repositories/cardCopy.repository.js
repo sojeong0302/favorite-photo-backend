@@ -17,6 +17,28 @@ const cardCopyRepository = {
     });
   },
 
+  getCardCopyById: async ({ id, include, tx }) => {
+    const dbClient = tx || prisma;
+
+    return await dbClient.cardCopy.findUnique({
+      where: {
+        id,
+      },
+      include,
+    });
+  },
+
+  updateCardCopy: async ({ id, data, tx }) => {
+    const dbClient = tx || prisma;
+
+    return await dbClient.cardCopy.update({
+      where: {
+        id,
+      },
+      data,
+    });
+  },
+
   updateCardCopiesOwnerId: async ({ cardsIds, ownerId, tx }) => {
     const dbClient = tx || prisma;
 
