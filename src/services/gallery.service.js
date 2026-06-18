@@ -262,7 +262,7 @@ export const postMyCardsService = async ({
   if (monthlyCreateCount >= 3) {
     throw new AppError(ERROR_CODES.MONTHLY_CREATE_LIMIT_EXCEEDED());
   }
-  s;
+
   const result = await prisma.$transaction(async (tx) => {
     const photoCard = await tx.photoCard.create({
       data: {
