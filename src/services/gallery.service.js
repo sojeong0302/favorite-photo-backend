@@ -321,6 +321,18 @@ export const getMyTradesService = async ({
 
   let orderBy;
 
+  console.log('[입력]', {
+    userId,
+    tradeType,
+    grade,
+    genre,
+    keyword,
+    isSoldOut,
+    page,
+    limit,
+    sort,
+  });
+
   switch (sort) {
     case 'oldest':
       orderBy = { createdAt: 'asc' };
@@ -347,11 +359,13 @@ export const getMyTradesService = async ({
     ...(grade && { grade }),
     ...(genre && { genre }),
   };
+  //console.log('[photoCardWhere]', photoCardWhere);
 
   const parsedIsSoldOut =
     isSoldOut === undefined
       ? undefined
       : isSoldOut === 'true' || isSoldOut === true;
+  //console.log('[parsedIsSoldOut]', parsedIsSoldOut);
 
   const saleStatusWhere =
     parsedIsSoldOut === undefined
@@ -359,12 +373,153 @@ export const getMyTradesService = async ({
       : parsedIsSoldOut
         ? 'SOLD_OUT'
         : 'ON_SALE';
+  //console.log('[saleStatusWhere]', saleStatusWhere);
 
-  let sales = [];
-  let exchangeProposals = [];
+  //Sales와 Exchanges를 한 쿼리로 받아와야 함.
+  //현재는, 기본상태일 때의 값을 SALE과 EXCHANGE각각 따로 가져오는데 -> 기본 상태일 때, 아예 다른 쿼리로 가져오도록 수정이 필요.
 
-  if (!tradeType || tradeType === 'SALE') {
-    sales = await prisma.sale.findMany({
+  let items = [];
+
+  //기본 상태라면
+  //정렬 기준은 항상 고정되어있으니까 그냥 변수로 안넣음. 나중에 필요하면 추가..
+  if (!tradeType) {
+    const saleStatusSQL =
+      parsedIsSoldOut === undefined
+        ? `s."status" IN ('ON_SALE', 'SOLD_OUT', 'CANCELED')`
+        : parsedIsSoldOut
+          ? `s."status" = 'SOLD_OUT'`
+          : `s."status" = 'ON_SALE'`;
+    //console.log('[saleStatusSQL]', saleStatusSQL);
+    let tradesRaw = [];
+    try {
+      tradesRaw = await prisma.$queryRawUnsafe(
+        `
+      SELECT * FROM(
+        SELECT s.id, 'SALE' AS type, s."createdAt"
+        FROM "Sale" s
+        JOIN "PhotoCard" pc ON s."photoCardId" = pc.id
+        WHERE s."sellerId" = $1 
+          AND ${saleStatusSQL} 
+          AND ($2::text IS NULL OR pc."grade" = $2::"CardGrade")
+          AND ($3::text IS NULL OR pc."genre" = $3::"CardGenre")
+          AND ($4::text IS NULL OR pc."name" ILIKE '%' || $4 || '%')
+        
+        UNION ALL
+        
+        SELECT ep.id, 'EXCHANGE' AS type, ep."createdAt"
+        FROM "ExchangeProposal" ep
+        JOIN "CardCopy" cc ON ep."offeredCardCopyId" = cc.id
+        JOIN "PhotoCard" pc ON cc."photoCardId" = pc.id
+        WHERE ep."proposerId" = $1 
+          AND ep."status" = 'PENDING'
+          AND ($2::text IS NULL OR pc."grade" = $2::"CardGrade")
+          AND ($3::text IS NULL OR pc."genre" = $3::"CardGenre")
+          AND ($4::text IS NULL OR pc."name" ILIKE '%' || $4 || '%')
+      ) AS trades
+      ORDER BY "createdAt" DESC
+      LIMIT $5 OFFSET $6;
+    `,
+        userId,
+        grade ?? null,
+        genre ?? null,
+        keyword ?? null,
+        limit,
+        skip
+      );
+      //console.log('[tradesRaw]', tradesRaw);
+    } catch (e) {
+      //console.log('[error]', e);
+    }
+
+    //tradesRaw에서 sale, exchange 분리
+    const saleIds = tradesRaw
+      .filter((trade) => trade.type === 'SALE')
+      .map((sale) => Number(sale.id));
+    const exchangeIds = tradesRaw
+      .filter((trade) => trade.type === 'EXCHANGE')
+      .map((exchange) => Number(exchange.id));
+    //sale에 대해, 데이터 가져오기
+    const sales = await prisma.sale.findMany({
+      where: { id: { in: saleIds } },
+      include: {
+        photoCard: {
+          include: {
+            creator: {
+              select: {
+                nickname: true,
+              },
+            },
+          },
+        },
+        saleItems: {
+          include: {
+            purchaseItem: true,
+          },
+        },
+      },
+    });
+    //exchange에 대해, 데이터 가져오기
+    const exchanges = await prisma.exchangeProposal.findMany({
+      where: {
+        id: { in: exchangeIds },
+      },
+      include: {
+        offeredCardCopy: {
+          include: {
+            photoCard: {
+              include: {
+                creator: {
+                  select: {
+                    nickname: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+        sale: {
+          select: {
+            id: true,
+            price: true,
+            status: true,
+            photoCard: {
+              select: {
+                name: true,
+              },
+            },
+          },
+        },
+      },
+    });
+    //이걸 포맷팅 해서 반환
+    const formattedSales = getFormattedSales({ sales });
+    const formattedExchanges = getFormattedExchanges({
+      exchangeProposals: exchanges,
+    });
+    //가져온 데이터를 trades로 합치기 & 정렬
+    items = [...formattedSales, ...formattedExchanges].sort((a, b) => {
+      if (sort === 'oldest') {
+        return new Date(a.createdAt) - new Date(b.createdAt);
+      }
+
+      if (sort === 'priceAsc') {
+        return a.price - b.price;
+      }
+
+      if (sort === 'priceDesc') {
+        return b.price - a.price;
+      }
+
+      return new Date(b.createdAt) - new Date(a.createdAt);
+    });
+  }
+
+  // let sales = [];
+  // let exchangeProposals = [];
+
+  //SALE만이라면
+  if (tradeType === 'SALE') {
+    const sales = await prisma.sale.findMany({
       where: {
         sellerId: userId,
         status: saleStatusWhere,
@@ -390,10 +545,15 @@ export const getMyTradesService = async ({
       skip,
       take: limit,
     });
+
+    const formattedSales = getFormattedSales({ sales });
+
+    items = formattedSales;
   }
 
-  if (!tradeType || tradeType === 'EXCHANGE') {
-    exchangeProposals = await prisma.exchangeProposal.findMany({
+  //EXCHANGE만이라면
+  if (tradeType === 'EXCHANGE') {
+    const exchangeProposals = await prisma.exchangeProposal.findMany({
       where: {
         proposerId: userId,
         status: 'PENDING',
@@ -432,28 +592,14 @@ export const getMyTradesService = async ({
       skip,
       take: limit,
     });
+
+    const formattedExchanges = getFormattedExchanges({ exchangeProposals });
+
+    items = formattedExchanges;
   }
 
-  const formattedSales = getFormattedSales({ sales });
-  const formattedExchanges = getFormattedExchanges({ exchangeProposals });
-
-  const items = [...formattedSales, ...formattedExchanges].sort((a, b) => {
-    if (sort === 'oldest') {
-      return new Date(a.createdAt) - new Date(b.createdAt);
-    }
-
-    if (sort === 'priceAsc') {
-      return a.price - b.price;
-    }
-
-    if (sort === 'priceDesc') {
-      return b.price - a.price;
-    }
-
-    return new Date(b.createdAt) - new Date(a.createdAt);
-  });
-
-  //Grade 통계를 위한, 전체 목록 가져오기
+  //---Grade 통계 파트---
+  //Grade 통계를 위한, 전체 목록 (grade만) 가져오기
   let totalSalesGrades = [];
   let totalExchangeProposalsGrades = [];
   if (!tradeType || tradeType === 'SALE') {

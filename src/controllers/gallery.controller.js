@@ -93,11 +93,11 @@ export const getMyTrades = async (req, res, next) => {
 
     const result = await getMyTradesService({
       userId,
-      keyword,
-      grade,
-      genre,
-      tradeType,
-      isSoldOut,
+      keyword: keyword || undefined,
+      grade: grade || undefined,
+      genre: genre || undefined,
+      tradeType: tradeType || undefined,
+      isSoldOut: isSoldOut || undefined,
       page: Number(page),
       limit: Number(limit),
       sort,
