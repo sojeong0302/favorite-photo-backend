@@ -369,7 +369,7 @@ export const getMyTradesService = async ({
 
   const saleStatusWhere =
     parsedIsSoldOut === undefined
-      ? { in: ['ON_SALE', 'SOLD_OUT', 'CANCELED'] }
+      ? { in: ['ON_SALE', 'SOLD_OUT'] }
       : parsedIsSoldOut
         ? 'SOLD_OUT'
         : 'ON_SALE';
@@ -385,7 +385,7 @@ export const getMyTradesService = async ({
   if (!tradeType) {
     const saleStatusSQL =
       parsedIsSoldOut === undefined
-        ? `s."status" IN ('ON_SALE', 'SOLD_OUT', 'CANCELED')`
+        ? `s."status" IN ('ON_SALE', 'SOLD_OUT')`
         : parsedIsSoldOut
           ? `s."status" = 'SOLD_OUT'`
           : `s."status" = 'ON_SALE'`;
@@ -606,8 +606,7 @@ export const getMyTradesService = async ({
     const totalSales = await prisma.sale.findMany({
       where: {
         sellerId: userId,
-        status: saleStatusWhere,
-        photoCard: photoCardWhere,
+        status: { in: ['ON_SALE', 'SOLD_OUT'] }, //isSoldOut이 undefined일 때의 조건과 같음. (기본 상태)
       },
       select: { photoCard: { select: { grade: true } } },
     });
@@ -620,9 +619,6 @@ export const getMyTradesService = async ({
       where: {
         proposerId: userId,
         status: 'PENDING',
-        offeredCardCopy: {
-          photoCard: photoCardWhere,
-        },
       },
       select: {
         offeredCardCopy: { select: { photoCard: { select: { grade: true } } } },
